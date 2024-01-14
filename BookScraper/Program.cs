@@ -12,20 +12,25 @@ namespace BookScraper
 			var url = "https://books.toscrape.com/";
 			var web = new HtmlWeb();
 
-			// VisitNode(web, url, "index.html").Wait();
+			_workerPool.AddWork(() => VisitNode(web, url, "index.html"));
+			while (_workerPool.HasWork)
+			{
+				_workerPool.GetResult();
+			}
 			// VisitNode(web, url, "/static/oscar/css/styles.css").Wait();
-			VisitNode(web, url, "catalogue/sharp-objects_997/index.html").Wait();
+			// VisitNode(web, url, "catalogue/sharp-objects_997/index.html").Wait();
 			// VisitNode(web, url, "media/cache/26/0c/260c6ae16bce31c8f8c95daddd9f4a1c.jpg").Wait();
 		}
 
 		private static readonly ConcurrentDictionary<string, byte> VisitedNodes = new ConcurrentDictionary<string, byte>();
+		private static WorkerPool<bool> _workerPool = new WorkerPool<bool>(8);
 
-		private static async Task VisitNode(HtmlWeb web, string baseUrl, string relativePath)
+		private static async Task<bool> VisitNode(HtmlWeb web, string baseUrl, string relativePath)
 		{
 			var nodeAlreadyVisited = !VisitedNodes.TryAdd(relativePath, 0);
 			if (nodeAlreadyVisited)
 			{
-				return;
+				return false;
 			}
 
 			Console.WriteLine("Visiting: " + relativePath);
@@ -37,7 +42,6 @@ namespace BookScraper
 			}
 			else
 			{
-
 				var html = await web.LoadFromWebAsync(urlBuilder.Uri.AbsoluteUri);
 				SaveHtml(html, relativePath);
 
@@ -47,10 +51,12 @@ namespace BookScraper
 
 					foreach (var link in allLinks)
 					{
-						await VisitNode(web, baseUrl, NormalizeLink(relativePath, link));
+						_workerPool.AddWork(() => VisitNode(web, baseUrl, NormalizeLink(relativePath, link)));
 					}
 				}
 			}
+
+			return true;
 		}
 
 		private static bool IsBinary(string relativePath)
@@ -90,16 +96,20 @@ namespace BookScraper
 				var fileName = Path.Join(folder, uri.LocalPath.Split('/').Last());
 				await File.WriteAllBytesAsync(fileName, imageBytes);
 			}
-
 		}
 
 		private static void SaveHtml(HtmlDocument html, string relativePath)
 		{
-			var folder = ".\\LocalVersion\\" + string.Join('\\', relativePath.Split('/').Reverse().Skip(1).Reverse());
+			var folder = GetLocalFolder(relativePath);
 			Console.WriteLine($"Writing {relativePath}");
 			Directory.CreateDirectory(folder);
 			var fileName = relativePath.Split('/').Last();
 			File.WriteAllText(Path.Join(folder, fileName), html.DocumentNode.WriteContentTo());
+		}
+
+		private static string GetLocalFolder(string relativePath)
+		{
+			return ".\\LocalVersion\\" + string.Join('\\', relativePath.Split('/').Reverse().Skip(1).Reverse());
 		}
 
 		private static IEnumerable<string> GetAllLinks(HtmlDocument html)
