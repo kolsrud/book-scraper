@@ -2,14 +2,14 @@
 
 namespace BookScraper;
 
-public class WorkerPool<T>
+public class WorkerPool
 {
 	private readonly int _workerCount;
 	private int _freeWorkers;
 
-	private readonly List<Task> _workers = new List<Task>();
-	private readonly Queue<Func<Task<T>>> _queue = new Queue<Func<Task<T>>>();
-	private readonly BlockingCollection<Task<T>> _completedTasks = new BlockingCollection<Task<T>>();
+	private readonly Dictionary<int, Task> _workers = new Dictionary<int, Task>();
+	private readonly Queue<Func<Task>> _queue = new Queue<Func<Task>>();
+	private readonly BlockingCollection<Task> _completedTasks = new BlockingCollection<Task>();
 
 	public WorkerPool(int workerCount)
 	{
@@ -17,7 +17,9 @@ public class WorkerPool<T>
 		_freeWorkers = workerCount;
 	}
 
-	public void AddWork(Func<Task<T>> job)
+	private static int taskId = 0;
+
+	public void AddWork(Func<Task> job)
 	{
 		lock (_workers)
 		{
@@ -29,17 +31,19 @@ public class WorkerPool<T>
 
 			lock (_workers)
 			{
-				_workers.Add(job().ContinueWith(OnTaskCompleted));
+				var id = taskId++;
+				_workers.Add(id, job().ContinueWith(t => OnTaskCompleted(id, t)));
 				_freeWorkers--;
 			}
 		}
 	}
 
-	private void OnTaskCompleted(Task<T> t)
+	private void OnTaskCompleted(int id, Task t)
 	{
 		lock (_workers)
 		{
-			_workers.Remove(t);
+			_workers.Remove(id);
+
 			_freeWorkers++;
 			if (_queue.Any())
 			{
@@ -53,8 +57,9 @@ public class WorkerPool<T>
 
 	public bool IsFull => _freeWorkers == 0;
 	public bool HasWork => _freeWorkers != _workerCount || _completedTasks.Any();
+	public int CurrentLoad => _queue.Count + (_workerCount - _freeWorkers);
 
-	public Task<T> GetResult()
+	public Task GetResult()
 	{
 		if (!HasWork) throw new Exception("No tasks running.");
 

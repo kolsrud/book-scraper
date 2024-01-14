@@ -6,24 +6,25 @@ namespace BookScraper
 {
 	internal class Program
 	{
-		// priva
 		static void Main(string[] args)
 		{
 			var url = "https://books.toscrape.com/";
 			var web = new HtmlWeb();
 
 			_workerPool.AddWork(() => VisitNode(web, url, "index.html"));
+			var visited = 0;
 			while (_workerPool.HasWork)
 			{
 				_workerPool.GetResult();
+				visited++;
+				if (visited % 100 == 0)
+					Console.WriteLine($"Visits completed: {visited}, Remaining nodes to visit: {_workerPool.CurrentLoad}");
 			}
-			// VisitNode(web, url, "/static/oscar/css/styles.css").Wait();
-			// VisitNode(web, url, "catalogue/sharp-objects_997/index.html").Wait();
-			// VisitNode(web, url, "media/cache/26/0c/260c6ae16bce31c8f8c95daddd9f4a1c.jpg").Wait();
+			Console.WriteLine($"Visits completed: {visited}, Remaining nodes to visit: {_workerPool.CurrentLoad}");
 		}
 
 		private static readonly ConcurrentDictionary<string, byte> VisitedNodes = new ConcurrentDictionary<string, byte>();
-		private static WorkerPool<bool> _workerPool = new WorkerPool<bool>(8);
+		private static WorkerPool _workerPool = new WorkerPool(8);
 
 		private static async Task<bool> VisitNode(HtmlWeb web, string baseUrl, string relativePath)
 		{
@@ -32,8 +33,6 @@ namespace BookScraper
 			{
 				return false;
 			}
-
-			Console.WriteLine("Visiting: " + relativePath);
 
 			var urlBuilder = new UriBuilder(baseUrl) { Path = relativePath };
 			if (IsBinary(relativePath))
@@ -49,7 +48,7 @@ namespace BookScraper
 				{
 					var allLinks = GetAllLinks(html).Where(IsRelative);
 
-					foreach (var link in allLinks)
+					foreach (var link in allLinks.Except(VisitedNodes.Keys))
 					{
 						_workerPool.AddWork(() => VisitNode(web, baseUrl, NormalizeLink(relativePath, link)));
 					}
@@ -85,14 +84,12 @@ namespace BookScraper
 		private static async Task SaveBinary(Uri uri)
 		{
 			var folder = ".\\LocalVersion\\" + string.Join('\\', uri.LocalPath.Split('/').Reverse().Skip(1).Reverse());
-			Console.WriteLine($"Writing {uri.LocalPath} (binary)");
 			Directory.CreateDirectory(folder);
 
 			using (var client = new System.Net.Http.HttpClient()) // WebClient
 			{
 				// Download the image and write to the file
 				var imageBytes = await client.GetByteArrayAsync(uri);
-				Console.WriteLine("Bytes: " + imageBytes.Length);
 				var fileName = Path.Join(folder, uri.LocalPath.Split('/').Last());
 				await File.WriteAllBytesAsync(fileName, imageBytes);
 			}
@@ -100,14 +97,13 @@ namespace BookScraper
 
 		private static void SaveHtml(HtmlDocument html, string relativePath)
 		{
-			var folder = GetLocalFolder(relativePath);
-			Console.WriteLine($"Writing {relativePath}");
+			var folder = GetLocalFolderName(relativePath);
 			Directory.CreateDirectory(folder);
 			var fileName = relativePath.Split('/').Last();
 			File.WriteAllText(Path.Join(folder, fileName), html.DocumentNode.WriteContentTo());
 		}
 
-		private static string GetLocalFolder(string relativePath)
+		private static string GetLocalFolderName(string relativePath)
 		{
 			return ".\\LocalVersion\\" + string.Join('\\', relativePath.Split('/').Reverse().Skip(1).Reverse());
 		}
@@ -125,6 +121,7 @@ namespace BookScraper
 			return linkCarryingNodes.SelectMany(nodeSpec => GetAllNodes(html, nodeSpec.Item1, nodeSpec.Item2));
 		}
 
+		// Get the list of all nodes referred to by an html document.
 		private static IEnumerable<string> GetAllNodes(HtmlDocument html, string nodeType, string attributeIdentifier)
 		{
 			var nodes = html.DocumentNode.SelectNodes($"//{nodeType}[@{attributeIdentifier}]").ToArray();
