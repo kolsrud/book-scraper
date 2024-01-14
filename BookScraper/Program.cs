@@ -9,24 +9,32 @@ namespace BookScraper
 		static void Main(string[] args)
 		{
 			var url = "https://books.toscrape.com/";
-			var web = new HtmlWeb();
 
-			_workerPool.AddWork(() => VisitNode(web, url, "index.html"));
-			var visited = 0;
-			while (_workerPool.HasWork)
+			using (var client = new HttpClient())
 			{
-				_workerPool.GetResult();
-				visited++;
-				if (visited % 100 == 0)
-					Console.WriteLine($"Visits completed: {visited}, Remaining nodes to visit: {_workerPool.CurrentLoad}");
+				var web = new HtmlWeb();
+
+
+				_workerPool.AddWork(() => VisitNode(web, client, url, "index.html"));
+				var visited = 0;
+				while (_workerPool.HasWork)
+				{
+					_workerPool.GetResult();
+					visited++;
+					if (visited % 100 == 0)
+						Console.WriteLine(
+							$"Visits completed: {visited}, Remaining nodes to visit: {_workerPool.CurrentLoad}");
+				}
+				Console.WriteLine($"Visits completed: {visited}, Remaining nodes to visit: {_workerPool.CurrentLoad}");
 			}
-			Console.WriteLine($"Visits completed: {visited}, Remaining nodes to visit: {_workerPool.CurrentLoad}");
+
 		}
 
 		private static readonly ConcurrentDictionary<string, byte> VisitedNodes = new ConcurrentDictionary<string, byte>();
 		private static WorkerPool _workerPool = new WorkerPool(8);
 
-		private static async Task<bool> VisitNode(HtmlWeb web, string baseUrl, string relativePath)
+		private static async Task<bool> VisitNode(HtmlWeb web, HttpClient client, string baseUrl,
+			string relativePath)
 		{
 			var nodeAlreadyVisited = !VisitedNodes.TryAdd(relativePath, 0);
 			if (nodeAlreadyVisited)
@@ -37,7 +45,7 @@ namespace BookScraper
 			var urlBuilder = new UriBuilder(baseUrl) { Path = relativePath };
 			if (IsBinary(relativePath))
 			{
-				await SaveBinary(urlBuilder.Uri);
+				await SaveBinary(client, urlBuilder.Uri);
 			}
 			else
 			{
@@ -50,7 +58,7 @@ namespace BookScraper
 
 					foreach (var link in allLinks.Except(VisitedNodes.Keys))
 					{
-						_workerPool.AddWork(() => VisitNode(web, baseUrl, NormalizeLink(relativePath, link)));
+						_workerPool.AddWork(() => VisitNode(web, client, baseUrl, NormalizeLink(relativePath, link)));
 					}
 				}
 			}
@@ -81,18 +89,15 @@ namespace BookScraper
 			return !Uri.TryCreate(url, UriKind.Absolute, out _);
 		}
 
-		private static async Task SaveBinary(Uri uri)
+		private static async Task SaveBinary(HttpClient client, Uri uri)
 		{
 			var folder = ".\\LocalVersion\\" + string.Join('\\', uri.LocalPath.Split('/').Reverse().Skip(1).Reverse());
 			Directory.CreateDirectory(folder);
 
-			using (var client = new System.Net.Http.HttpClient()) // WebClient
-			{
-				// Download the image and write to the file
-				var imageBytes = await client.GetByteArrayAsync(uri);
-				var fileName = Path.Join(folder, uri.LocalPath.Split('/').Last());
-				await File.WriteAllBytesAsync(fileName, imageBytes);
-			}
+			// Download the image and write to the file
+			var imageBytes = await client.GetByteArrayAsync(uri);
+			var fileName = Path.Join(folder, uri.LocalPath.Split('/').Last());
+			await File.WriteAllBytesAsync(fileName, imageBytes);
 		}
 
 		private static void SaveHtml(HtmlDocument html, string relativePath)
