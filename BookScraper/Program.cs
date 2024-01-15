@@ -31,7 +31,7 @@ namespace BookScraper
 		}
 
 		private static readonly ConcurrentDictionary<string, byte> VisitedNodes = new ConcurrentDictionary<string, byte>();
-		private static WorkerPool _workerPool = new WorkerPool(8);
+		private static readonly WorkerPool _workerPool = new WorkerPool(8);
 
 		private static async Task<bool> VisitNode(HtmlWeb web, HttpClient client, string baseUrl,
 			string relativePath)
